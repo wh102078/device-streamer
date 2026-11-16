@@ -1,7 +1,7 @@
 CXX      := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -g -Isrc
-FF_CFLAGS := $(shell pkg-config --cflags libavcodec libavutil libswscale)
-FF_LIBS   := $(shell pkg-config --libs libavcodec libavutil libswscale)
+FF_CFLAGS := $(shell pkg-config --cflags libavcodec libavformat libavutil libswscale)
+FF_LIBS   := $(shell pkg-config --libs libavcodec libavformat libavutil libswscale)
 
 TARGET := device_streamer
 SRC    := $(wildcard src/*.cpp)

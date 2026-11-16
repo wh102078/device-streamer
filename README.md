@@ -19,7 +19,7 @@ UVC 摄像头 ──V4L2(MJPEG)──► libavcodec 解码 ──► yuvj422p
 - [x] MJPEG 解码（libavcodec）
 - [x] yuvj422p → yuv420p 转换（含 full/limited range 处理）
 - [x] H.264 编码（libx264，GOP/PTS/flush）
-- [ ] RTSP 推流到 mediamtx
+- [x] RTSP 推流到 mediamtx（FFmpeg RTSP muxer，TCP）
 - [ ] 用 RTSP 客户端拉流验证端到端
 - [ ] 采集/编码统计、推流断线重连
 
@@ -27,8 +27,11 @@ UVC 摄像头 ──V4L2(MJPEG)──► libavcodec 解码 ──► yuvj422p
 
 ```bash
 make
-./device_streamer
+./device_streamer [rtsp_url]
+# 默认 rtsp://127.0.0.1:8554/dev
 ```
+
+需要先启动 mediamtx（本地测试用 `tools/mediamtx/mediamtx`）。
 
 依赖：`libavcodec`、`libavutil`、`libswscale`（`pkg-config` 查找），以及支持 libx264 的 FFmpeg。
 

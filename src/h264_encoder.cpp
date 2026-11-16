@@ -63,7 +63,7 @@ void H264Encoder::open(int width, int height, int fps) {
                 width, height, fps, fps);
 }
 
-bool H264Encoder::encode(const AVFrame* frame, std::FILE* out) {
+bool H264Encoder::encode(const AVFrame* frame) {
     // 源格式要等第一帧才知道（yuvj422p），所以第一次编码时建转换器
     if (sws_ == nullptr) {
         sws_ = sws_getContext(frame->width, frame->height,
@@ -94,41 +94,28 @@ bool H264Encoder::encode(const AVFrame* frame, std::FILE* out) {
     if (ret < 0) {
         ds::ff_die("avcodec_send_frame", ret);
     }
-    drain(out);
     return true;
 }
 
-void H264Encoder::flush(std::FILE* out) {
+bool H264Encoder::next_packet(AVPacket* pkt) {
+    int ret = avcodec_receive_packet(ctx_, pkt);
+    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+        return false;  // 暂时没有新包，或编码器已彻底结束
+    }
+    if (ret < 0) {
+        ds::ff_die("avcodec_receive_packet", ret);
+    }
+
+    ++packets_;
+    if (pkt->flags & AV_PKT_FLAG_KEY) {
+        ++keyframes_;
+    }
+    return true;
+}
+
+void H264Encoder::flush() {
     int ret = avcodec_send_frame(ctx_, nullptr);  // NULL = 没有更多输入
     if (ret < 0) {
         ds::ff_die("avcodec_send_frame(flush)", ret);
     }
-    drain(out);
-}
-
-// 编码器内部有延迟，send 一帧不一定立刻出包，所以循环 receive 到 EAGAIN。
-void H264Encoder::drain(std::FILE* out) {
-    AVPacket* pkt = av_packet_alloc();
-    if (pkt == nullptr) {
-        std::fprintf(stderr, "error: av_packet_alloc 失败\n");
-        std::exit(EXIT_FAILURE);
-    }
-
-    for (;;) {
-        int ret = avcodec_receive_packet(ctx_, pkt);
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-            break;
-        }
-        if (ret < 0) {
-            ds::ff_die("avcodec_receive_packet", ret);
-        }
-
-        std::fwrite(pkt->data, 1, static_cast<size_t>(pkt->size), out);
-        ++packets_;
-        if (pkt->flags & AV_PKT_FLAG_KEY) {
-            ++keyframes_;
-        }
-        av_packet_unref(pkt);
-    }
-    av_packet_free(&pkt);
 }

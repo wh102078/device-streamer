@@ -1,11 +1,13 @@
-// device_streamer：采集(MJPEG) → 解码(yuvj422p) → 编码(H.264) 的最小闭环。
-// 抓 10 帧，把每层的中间结果存成文件，方便逐层验证。
-// 这一步只跑 10 帧；持续采集 + 推流在第 4 步做。
+// device_streamer：采集(MJPEG) → 解码 → 编码(H.264) → RTSP 推流到 mediamtx。
+// 用法：
+//   ./device_streamer [rtsp_url]
+//   默认 rtsp://127.0.0.1:8554/dev；Ctrl+C 优雅退出。
 
 #include <linux/videodev2.h>
 
 #include <cerrno>
 #include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,15 +23,23 @@ extern "C" {
 #include "common.h"
 #include "h264_encoder.h"
 #include "mjpeg_decoder.h"
+#include "rtsp_pusher.h"
 #include "v4l2_capture.h"
 
 namespace {
 
 constexpr const char* kDevice = "/dev/video0";
+constexpr const char* kDefaultUrl = "rtsp://127.0.0.1:8554/dev";
 constexpr unsigned kWidth = 640;
 constexpr unsigned kHeight = 480;
 constexpr unsigned kFps = 30;
-constexpr unsigned kFrameCount = 10;
+
+// 信号处理函数里只能访问 sig_atomic_t 这类最简单的东西，不能调 printf/malloc
+volatile sig_atomic_t g_stop = 0;
+
+void on_signal(int) {
+    g_stop = 1;
+}
 
 void write_file(const char* path, const void* data, size_t size) {
     std::FILE* f = std::fopen(path, "wb");
@@ -44,8 +54,7 @@ void write_file(const char* path, const void* data, size_t size) {
     std::fclose(f);
 }
 
-// 把解码后的 AVFrame（YUV 三平面）转 RGB 存成 PPM，用来肉眼验证解码结果。
-// 这不是管线必经环节，只是调试输出。
+// 调试用：把解码后的第一帧转 RGB 存成 PPM，方便肉眼确认画面
 void save_ppm(const char* path, const AVFrame* frame) {
     SwsContext* sws = sws_getContext(frame->width, frame->height,
                                      static_cast<AVPixelFormat>(frame->format),
@@ -78,13 +87,18 @@ void save_ppm(const char* path, const AVFrame* frame) {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const char* url = (argc > 1) ? argv[1] : kDefaultUrl;
+
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
+
     // 1) 采集
     V4L2Capture cap;
     cap.open(kDevice, kWidth, kHeight, V4L2_PIX_FMT_MJPEG);
     cap.start();
 
-    // 2) 解码 / 编码
+    // 2) 解码 / 编码 / 推流
     MJPEGDecoder decoder;
 
     AVFrame* frame = av_frame_alloc();
@@ -96,55 +110,79 @@ int main() {
     H264Encoder encoder;
     encoder.open(static_cast<int>(kWidth), static_cast<int>(kHeight), static_cast<int>(kFps));
 
-    std::FILE* h264 = std::fopen("out/output.h264", "wb");
-    if (h264 == nullptr) {
-        std::fprintf(stderr, "fopen(out/output.h264) failed: %s\n", std::strerror(errno));
+    RtspPusher pusher;
+    pusher.open(url, encoder.context());
+
+    AVPacket* pkt = av_packet_alloc();
+    if (pkt == nullptr) {
+        std::fprintf(stderr, "error: av_packet_alloc 失败\n");
         return EXIT_FAILURE;
     }
 
-    // 3) 主循环：抓一帧 → 存原始 jpg → 解码 → 存 ppm → 编码 → 还缓冲
+    // 3) 主循环：抓帧 → 解码 → 编码 → 推流
     auto start_time = std::chrono::steady_clock::now();
-    unsigned n = 0;
-    while (n < kFrameCount) {
+    auto last_report = start_time;
+    unsigned frames = 0;
+
+    std::printf("\n开始推流（Ctrl+C 退出）\n\n");
+
+    while (!g_stop) {
         CapturedFrame f;
         if (!cap.grab(&f)) {
-            break;  // 连续取不到有效帧，退出
+            break;  // 连续取不到有效帧
         }
 
-        char jpg_path[64];
-        std::snprintf(jpg_path, sizeof(jpg_path), "out/frame_%02u.jpg", n);
-        write_file(jpg_path, f.data, f.size);
-
-        if (decoder.decode(f.data, f.size, frame)) {
-            if (n == 0) {
-                std::printf("decode : %dx%d 像素格式=%s\n", frame->width, frame->height,
-                            av_get_pix_fmt_name(static_cast<AVPixelFormat>(frame->format)));
-            }
-            char ppm_path[64];
-            std::snprintf(ppm_path, sizeof(ppm_path), "out/frame_%02u.ppm", n);
-            save_ppm(ppm_path, frame);
-
-            encoder.encode(frame, h264);
-        } else {
-            std::printf("         !! 解码失败（第 %u 帧）\n", n);
+        if (!decoder.decode(f.data, f.size, frame)) {
+            cap.release();
+            continue;
         }
 
-        std::printf("frame %2u  seq=%u  size=%zu\n", n, f.sequence, f.size);
+        // 只保存第一帧，供肉眼验证；持续推流时不再逐帧写文件
+        if (frames == 0) {
+            write_file("out/frame_00.jpg", f.data, f.size);
+            save_ppm("out/frame_00.ppm", frame);
+            std::printf("decode : %dx%d 像素格式=%s\n", frame->width, frame->height,
+                        av_get_pix_fmt_name(static_cast<AVPixelFormat>(frame->format)));
+        }
 
-        cap.release();  // 缓冲还回驱动
-        ++n;
+        encoder.encode(frame);
+
+        // 编码器有延迟：一次 send 可能出 0 个、1 个或多个包，全部推出去
+        while (encoder.next_packet(pkt)) {
+            pusher.write(pkt);
+            av_packet_unref(pkt);
+        }
+
+        cap.release();  // 数据用完，缓冲还给驱动
+        ++frames;
+
+        // 每秒打印一次状态
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_report >= std::chrono::seconds(1)) {
+            double elapsed = std::chrono::duration<double>(now - start_time).count();
+            std::printf("streaming: %u 帧, %.1f fps, %u 包, %u 关键帧, 丢弃 %u\n",
+                        frames, frames / elapsed, encoder.packets(),
+                        encoder.keyframes(), cap.rejected());
+            last_report = now;
+        }
     }
 
-    // 4) 收尾
-    encoder.flush(h264);
-    std::fclose(h264);
+    // 4) 收尾：flush 编码器，把残余包也推出去，再断开 RTSP
+    std::printf("\n停止中...\n");
+    encoder.flush();
+    while (encoder.next_packet(pkt)) {
+        pusher.write(pkt);
+        av_packet_unref(pkt);
+    }
+    pusher.close();
 
     auto end_time = std::chrono::steady_clock::now();
     double seconds = std::chrono::duration<double>(end_time - start_time).count();
-    std::printf("\n完成: %u 帧, 丢弃 %u 坏帧, 编码 %u 包(%u 关键帧), 耗时 %.3fs\n",
-                n, cap.rejected(), encoder.packets(), encoder.keyframes(), seconds);
-    std::printf("输出: out/frame_*.jpg, out/frame_*.ppm, out/output.h264\n");
+    std::printf("结束: %u 帧, %.1f fps, %u 包(%u 关键帧), 丢弃 %u, 总时长 %.1fs\n",
+                frames, seconds > 0 ? frames / seconds : 0.0, encoder.packets(),
+                encoder.keyframes(), cap.rejected(), seconds);
 
+    av_packet_free(&pkt);
     av_frame_free(&frame);
     return 0;
 }
