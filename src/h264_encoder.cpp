@@ -3,6 +3,10 @@
 #include <cstdio>
 #include <cstdlib>
 
+extern "C" {
+#include <libavutil/dict.h>
+}
+
 #include "common.h"
 
 H264Encoder::~H264Encoder() {
@@ -40,7 +44,13 @@ void H264Encoder::open(int width, int height, int fps) {
     ctx_->max_b_frames = 0;               // 不用 B 帧，简化 PTS
     ctx_->thread_count = 1;
 
-    int ret = avcodec_open2(ctx_, codec, nullptr);
+    // tune=zerolatency：关掉 x264 的预读缓冲（默认会攒 30~40 帧才出第一个包，
+    // 这就是推流端 1 秒延迟的主要来源）。代价是压缩率略低、码率控制没那么平滑。
+    AVDictionary* opts = nullptr;
+    av_dict_set(&opts, "tune", "zerolatency", 0);
+
+    int ret = avcodec_open2(ctx_, codec, &opts);
+    av_dict_free(&opts);
     if (ret < 0) {
         ds::ff_die("avcodec_open2(encoder)", ret);
     }
