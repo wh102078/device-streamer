@@ -1,0 +1,9 @@
+# 编译产物
+device_streamer
+*.o
+
+# 运行输出（帧图、码流）
+out/
+
+# 编辑器
+.vscode/
