@@ -141,6 +141,10 @@ int main(int argc, char** argv) {
             queue.push(std::move(q));
             cap.release();  // 数据已拷贝，立刻把缓冲还给驱动
         }
+
+        // 采集线程结束（Ctrl+C 或设备异常）时终止队列，唤醒主线程；
+        // 否则主线程只会在 pop 超时后继续空转，进程退不出去
+        queue.stop();
     });
 
     // 4) 主循环：从队列取帧 → 解码 → 编码 → 推流
@@ -153,7 +157,10 @@ int main(int argc, char** argv) {
     while (!g_stop) {
         QueuedFrame q;
         if (!queue.pop(&q, 50)) {
-            continue;  // 队列暂时为空，回去检查 g_stop
+            if (queue.stopped()) {
+                break;  // 采集线程已结束，没有更多帧
+            }
+            continue;  // 只是暂时为空，回去检查 g_stop
         }
 
         if (!decoder.decode(q.data.data(), q.data.size(), frame)) {

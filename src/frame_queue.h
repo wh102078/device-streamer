@@ -23,7 +23,15 @@ public:
     void push(QueuedFrame frame);
 
     // 取一帧。队列空时最多等待 timeout_ms，超时返回 false。
+    // 返回 false 有两种可能：超时，或队列已被 stop()。
     bool pop(QueuedFrame* out, int timeout_ms);
+
+    // 终止队列：唤醒所有等待者；之后先取完已缓冲的帧，再返回 false。
+    // 单向终态，可重复调用。
+    void stop();
+
+    // 是否已经 stop()
+    bool stopped() const;
 
     // 当前积压帧数
     std::size_t size() const;
@@ -36,5 +44,6 @@ private:
     std::condition_variable cv_;
     std::vector<QueuedFrame> items_;
     std::size_t capacity_;
+    bool stopped_ = false;
     unsigned dropped_ = 0;
 };
