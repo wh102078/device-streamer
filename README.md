@@ -13,6 +13,7 @@ UVC 摄像头 ──V4L2(MJPEG)──► 解码 ──► yuvj422p ──► yuv
 - MJPEG 解码（libavcodec）
 - 像素格式转换：yuvj422p → yuv420p（含 full/limited range 处理）
 - H.264 编码（libx264，zerolatency，GOP 30）
+- 采集线程 + 有界帧队列（容量 3，满时丢最旧帧），编码/推流慢时不阻塞采集
 - RTSP 推流（TCP，FFmpeg RTSP muxer）
 
 ## 构建

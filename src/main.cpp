@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 extern "C" {
@@ -21,6 +22,7 @@ extern "C" {
 }
 
 #include "common.h"
+#include "frame_queue.h"
 #include "h264_encoder.h"
 #include "mjpeg_decoder.h"
 #include "rtsp_pusher.h"
@@ -119,7 +121,29 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    // 3) 主循环：抓帧 → 解码 → 编码 → 推流
+    // 3) 采集线程：只管抓帧，放进队列
+    //    队列容量 3，满了丢最旧。这样编码/网络变慢时，采集线程不会被拖住。
+    LatestFrameQueue queue(3);
+    std::thread capture_thread([&cap, &queue]() {
+        while (!g_stop) {
+            CapturedFrame f;
+            if (!cap.grab(&f)) {
+                break;  // 连续取不到有效帧
+            }
+
+            // V4L2 的 mmap 缓冲 release 后随时会被驱动覆盖，
+            // 所以跨线程传递前必须拷贝一份（一帧约 45KB，开销可忽略）。
+            QueuedFrame q;
+            q.data.resize(f.size);
+            std::memcpy(q.data.data(), f.data, f.size);
+            q.sequence = f.sequence;
+
+            queue.push(std::move(q));
+            cap.release();  // 数据已拷贝，立刻把缓冲还给驱动
+        }
+    });
+
+    // 4) 主循环：从队列取帧 → 解码 → 编码 → 推流
     auto start_time = std::chrono::steady_clock::now();
     auto last_report = start_time;
     unsigned frames = 0;
@@ -127,19 +151,18 @@ int main(int argc, char** argv) {
     std::printf("\n开始推流（Ctrl+C 退出）\n\n");
 
     while (!g_stop) {
-        CapturedFrame f;
-        if (!cap.grab(&f)) {
-            break;  // 连续取不到有效帧
+        QueuedFrame q;
+        if (!queue.pop(&q, 50)) {
+            continue;  // 队列暂时为空，回去检查 g_stop
         }
 
-        if (!decoder.decode(f.data, f.size, frame)) {
-            cap.release();
+        if (!decoder.decode(q.data.data(), q.data.size(), frame)) {
             continue;
         }
 
         // 只保存第一帧，供肉眼验证；持续推流时不再逐帧写文件
         if (frames == 0) {
-            write_file("out/frame_00.jpg", f.data, f.size);
+            write_file("out/frame_00.jpg", q.data.data(), q.data.size());
             save_ppm("out/frame_00.ppm", frame);
             std::printf("decode : %dx%d 像素格式=%s\n", frame->width, frame->height,
                         av_get_pix_fmt_name(static_cast<AVPixelFormat>(frame->format)));
@@ -153,22 +176,26 @@ int main(int argc, char** argv) {
             av_packet_unref(pkt);
         }
 
-        cap.release();  // 数据用完，缓冲还给驱动
         ++frames;
 
         // 每秒打印一次状态
         auto now = std::chrono::steady_clock::now();
         if (now - last_report >= std::chrono::seconds(1)) {
             double elapsed = std::chrono::duration<double>(now - start_time).count();
-            std::printf("streaming: %u 帧, %.1f fps, %u 包, %u 关键帧, 丢弃 %u\n",
+            std::printf("streaming: %u 帧, %.1f fps, %u 包, %u 关键帧, "
+                        "采集丢弃 %u, 队列丢弃 %u, 积压 %zu\n",
                         frames, frames / elapsed, encoder.packets(),
-                        encoder.keyframes(), cap.rejected());
+                        encoder.keyframes(), cap.rejected(), queue.dropped(),
+                        queue.size());
             last_report = now;
         }
     }
 
-    // 4) 收尾：flush 编码器，把残余包也推出去，再断开 RTSP
+    // 4) 收尾：先让采集线程退出并回收，再 flush 编码器，最后断开 RTSP
     std::printf("\n停止中...\n");
+    if (capture_thread.joinable()) {
+        capture_thread.join();
+    }
     encoder.flush();
     while (encoder.next_packet(pkt)) {
         pusher.write(pkt);
@@ -178,9 +205,10 @@ int main(int argc, char** argv) {
 
     auto end_time = std::chrono::steady_clock::now();
     double seconds = std::chrono::duration<double>(end_time - start_time).count();
-    std::printf("结束: %u 帧, %.1f fps, %u 包(%u 关键帧), 丢弃 %u, 总时长 %.1fs\n",
+    std::printf("结束: %u 帧, %.1f fps, %u 包(%u 关键帧), 采集丢弃 %u, 队列丢弃 %u, "
+                "总时长 %.1fs\n",
                 frames, seconds > 0 ? frames / seconds : 0.0, encoder.packets(),
-                encoder.keyframes(), cap.rejected(), seconds);
+                encoder.keyframes(), cap.rejected(), queue.dropped(), seconds);
 
     av_packet_free(&pkt);
     av_frame_free(&frame);
