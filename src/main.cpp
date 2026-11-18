@@ -56,6 +56,30 @@ void write_file(const char* path, const void* data, size_t size) {
     std::fclose(f);
 }
 
+// 推流断开后的重连：指数退避 1s → 2s → 4s … 上限 30s。
+// 等待期间按 100ms 分片睡眠，保证 Ctrl+C 能及时生效。
+// 返回 false 表示用户要求停止。
+bool reconnect_pusher(RtspPusher& pusher, const char* url, AVCodecContext* enc,
+                      unsigned* attempts) {
+    unsigned delay_ms = 1000;
+    while (!g_stop) {
+        ++*attempts;
+        std::fprintf(stderr, "推流断开，%u ms 后重连（第 %u 次）\n", delay_ms, *attempts);
+        for (unsigned waited = 0; waited < delay_ms && !g_stop; waited += 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (g_stop) {
+            break;
+        }
+        if (pusher.open(url, enc)) {
+            std::fprintf(stderr, "推流重连成功\n");
+            return true;
+        }
+        delay_ms = (delay_ms * 2 > 30000) ? 30000 : delay_ms * 2;
+    }
+    return false;
+}
+
 // 调试用：把解码后的第一帧转 RGB 存成 PPM，方便肉眼确认画面
 void save_ppm(const char* path, const AVFrame* frame) {
     SwsContext* sws = sws_getContext(frame->width, frame->height,
@@ -113,7 +137,11 @@ int main(int argc, char** argv) {
     encoder.open(static_cast<int>(kWidth), static_cast<int>(kHeight), static_cast<int>(kFps));
 
     RtspPusher pusher;
-    pusher.open(url, encoder.context());
+    unsigned reconnects = 0;
+    if (!pusher.open(url, encoder.context())) {
+        std::fprintf(stderr, "error: 初始连接推流服务器失败（服务器是否已启动？）\n");
+        return EXIT_FAILURE;
+    }
 
     AVPacket* pkt = av_packet_alloc();
     if (pkt == nullptr) {
@@ -179,7 +207,13 @@ int main(int argc, char** argv) {
 
         // 编码器有延迟：一次 send 可能出 0 个、1 个或多个包，全部推出去
         while (encoder.next_packet(pkt)) {
-            pusher.write(pkt);
+            if (!pusher.write(pkt)) {
+                av_packet_unref(pkt);
+                // 网络断开或服务器重启：重连期间这一帧丢弃，
+                // 采集线程继续工作，队列满了会丢旧帧，保证画面实时性
+                reconnect_pusher(pusher, url, encoder.context(), &reconnects);
+                break;
+            }
             av_packet_unref(pkt);
         }
 
@@ -205,7 +239,7 @@ int main(int argc, char** argv) {
     }
     encoder.flush();
     while (encoder.next_packet(pkt)) {
-        pusher.write(pkt);
+        pusher.write(pkt);  // 收尾阶段发送失败就放弃，不再重连
         av_packet_unref(pkt);
     }
     pusher.close();
@@ -213,9 +247,10 @@ int main(int argc, char** argv) {
     auto end_time = std::chrono::steady_clock::now();
     double seconds = std::chrono::duration<double>(end_time - start_time).count();
     std::printf("结束: %u 帧, %.1f fps, %u 包(%u 关键帧), 采集丢弃 %u, 队列丢弃 %u, "
-                "总时长 %.1fs\n",
+                "重连 %u 次, 总时长 %.1fs\n",
                 frames, seconds > 0 ? frames / seconds : 0.0, encoder.packets(),
-                encoder.keyframes(), cap.rejected(), queue.dropped(), seconds);
+                encoder.keyframes(), cap.rejected(), queue.dropped(), reconnects,
+                seconds);
 
     av_packet_free(&pkt);
     av_frame_free(&frame);
