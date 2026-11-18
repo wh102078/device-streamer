@@ -211,7 +211,11 @@ int main(int argc, char** argv) {
                 av_packet_unref(pkt);
                 // 网络断开或服务器重启：重连期间这一帧丢弃，
                 // 采集线程继续工作，队列满了会丢旧帧，保证画面实时性
-                reconnect_pusher(pusher, url, encoder.context(), &reconnects);
+                if (reconnect_pusher(pusher, url, encoder.context(), &reconnects)) {
+                    // 新会话里客户端解码器是空的，下一帧强制 I 帧，
+                    // 否则要等下一个自然 GOP（最多 1 秒）才恢复画面
+                    encoder.request_keyframe();
+                }
                 break;
             }
             av_packet_unref(pkt);

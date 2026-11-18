@@ -34,6 +34,10 @@ public:
     // 输入结束后调用：送 NULL 触发 flush，让内部缓存的帧吐出来。
     void flush();
 
+    // 请求下一帧编码成 I 帧（关键帧）。
+    // 断线重连后调用：新会话里客户端解码器是空的，必须从 I 帧开始。
+    void request_keyframe() { force_keyframe_ = true; }
+
     // 给 muxer 用：拿编码器的宽高、帧率、extradata（SPS/PPS）等参数
     AVCodecContext* context() const { return ctx_; }
 
@@ -45,6 +49,7 @@ private:
     AVFrame* yuv420p_ = nullptr;
     SwsContext* sws_ = nullptr;
     int64_t next_pts_ = 0;
+    bool force_keyframe_ = false;
     unsigned packets_ = 0;
     unsigned keyframes_ = 0;
 };

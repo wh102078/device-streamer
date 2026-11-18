@@ -100,6 +100,16 @@ bool H264Encoder::encode(const AVFrame* frame) {
 
     yuv420p_->pts = next_pts_++;  // PTS 必须单调递增
 
+    // 重连后请求的 I 帧：只作用于这一帧，用完立刻复位，
+    // 否则每帧都是关键帧，码率会大幅上升
+    if (force_keyframe_) {
+        yuv420p_->pict_type = AV_PICTURE_TYPE_I;
+        force_keyframe_ = false;
+        std::printf("encoder: 强制 I 帧（重连后恢复画面）\n");
+    } else {
+        yuv420p_->pict_type = AV_PICTURE_TYPE_NONE;
+    }
+
     int ret = avcodec_send_frame(ctx_, yuv420p_);
     if (ret < 0) {
         ds::ff_die("avcodec_send_frame", ret);
