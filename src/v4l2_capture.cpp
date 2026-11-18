@@ -268,6 +268,9 @@ bool V4L2Capture::grab(CapturedFrame* out) {
         out->size = buf.bytesused;
         out->sequence = buf.sequence;
         out->index = buf.index;
+        // 驱动时间戳（CLOCK_MONOTONIC），秒 + 微秒
+        out->timestamp_us = static_cast<uint64_t>(buf.timestamp.tv_sec) * 1000000ULL +
+                            static_cast<uint64_t>(buf.timestamp.tv_usec);
         held_index_ = static_cast<int>(buf.index);
         return true;
     }

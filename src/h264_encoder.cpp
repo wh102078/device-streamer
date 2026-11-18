@@ -5,6 +5,7 @@
 
 extern "C" {
 #include <libavutil/dict.h>
+#include <libavutil/mathematics.h>
 }
 
 #include "common.h"
@@ -73,7 +74,7 @@ void H264Encoder::open(int width, int height, int fps) {
                 width, height, fps, fps);
 }
 
-bool H264Encoder::encode(const AVFrame* frame) {
+bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
     // 源格式要等第一帧才知道（yuvj422p），所以第一次编码时建转换器
     if (sws_ == nullptr) {
         sws_ = sws_getContext(frame->width, frame->height,
@@ -98,7 +99,19 @@ bool H264Encoder::encode(const AVFrame* frame) {
     sws_scale(sws_, frame->data, frame->linesize, 0, frame->height,
               yuv420p_->data, yuv420p_->linesize);
 
-    yuv420p_->pts = next_pts_++;  // PTS 必须单调递增
+    // PTS 来自真实采集时间，而不是帧序号：
+    // 相机从 30fps 降到 15fps 时，帧间隔变成 66ms，PTS 也要跟着变成 2 个单位，
+    // 否则客户端会按 33ms 播放，画面变成 2 倍速。
+    if (first_ts_us_ < 0) {
+        first_ts_us_ = static_cast<int64_t>(timestamp_us);
+    }
+    const int64_t rel_us = static_cast<int64_t>(timestamp_us) - first_ts_us_;
+    int64_t pts = av_rescale_q(rel_us, AVRational{1, 1000000}, ctx_->time_base);
+    if (pts <= last_pts_) {
+        pts = last_pts_ + 1;  // 防止两帧时间戳相同导致 PTS 不递增
+    }
+    last_pts_ = pts;
+    yuv420p_->pts = pts;
 
     // 重连后请求的 I 帧：只作用于这一帧，用完立刻复位，
     // 否则每帧都是关键帧，码率会大幅上升

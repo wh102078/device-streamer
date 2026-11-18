@@ -11,6 +11,7 @@
 struct QueuedFrame {
     std::vector<uint8_t> data;
     unsigned sequence = 0;
+    uint64_t timestamp_us = 0;  // 采集时间，用于生成 PTS
 };
 
 // 有界帧队列：满了就丢最旧的一帧。

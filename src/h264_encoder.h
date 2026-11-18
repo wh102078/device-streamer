@@ -24,8 +24,9 @@ public:
 
     void open(int width, int height, int fps);
 
-    // 转换像素格式并送进编码器。成功返回 true。
-    bool encode(const AVFrame* frame);
+    // 转换像素格式并送进编码器。
+    // timestamp_us：这一帧的采集时间（微秒），用来生成与真实时间一致的 PTS。
+    bool encode(const AVFrame* frame, uint64_t timestamp_us);
 
     // 取出一个编码包（调用方用 av_packet_alloc 分配）。
     // 返回 false 表示暂时没有更多包（EAGAIN）或已结束（EOF）。
@@ -48,7 +49,8 @@ private:
     AVCodecContext* ctx_ = nullptr;
     AVFrame* yuv420p_ = nullptr;
     SwsContext* sws_ = nullptr;
-    int64_t next_pts_ = 0;
+    int64_t first_ts_us_ = -1;  // 第一帧的采集时间，用作 PTS 基准
+    int64_t last_pts_ = -1;     // 上一帧的 PTS，保证单调递增
     bool force_keyframe_ = false;
     unsigned packets_ = 0;
     unsigned keyframes_ = 0;

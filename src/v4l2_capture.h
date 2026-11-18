@@ -2,6 +2,7 @@
 
 #include <linux/videodev2.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -9,9 +10,10 @@
 // 在调用 release() 之前有效，之后必须视为失效。
 struct CapturedFrame {
     const uint8_t* data = nullptr;
-    size_t size = 0;          // 这一帧实际字节数（bytesused）
-    unsigned sequence = 0;    // 驱动给的帧序号，跳号 = 丢帧
-    unsigned index = 0;       // 用的是第几块缓冲
+    size_t size = 0;            // 这一帧实际字节数（bytesused）
+    unsigned sequence = 0;      // 驱动给的帧序号，跳号 = 丢帧
+    unsigned index = 0;         // 用的是第几块缓冲
+    uint64_t timestamp_us = 0;  // 驱动时间戳（微秒），用于生成正确的 PTS
 };
 
 // V4L2 流式采集（mmap 模式）。
@@ -52,7 +54,8 @@ public:
     // 用完帧后调用，把缓冲还给驱动。不还的话队列会被掏空、最终停流。
     void release();
 
-    unsigned rejected() const { return rejected_; }
+    // 采集线程写、主线程读，必须是原子变量
+    unsigned rejected() const { return rejected_.load(); }
 
 private:
     struct Buffer {
@@ -74,5 +77,5 @@ private:
     unsigned buffer_count_ = 0;
     bool streaming_ = false;
     int held_index_ = -1;   // 当前拿在手里、还没还给驱动的缓冲
-    unsigned rejected_ = 0;
+    std::atomic<unsigned> rejected_{0};
 };

@@ -171,6 +171,7 @@ int main(int argc, char** argv) {
             q.data.resize(f.size);
             std::memcpy(q.data.data(), f.data, f.size);
             q.sequence = f.sequence;
+            q.timestamp_us = f.timestamp_us;
 
             queue.push(std::move(q));
             cap.release();  // 数据已拷贝，立刻把缓冲还给驱动
@@ -209,7 +210,7 @@ int main(int argc, char** argv) {
                         av_get_pix_fmt_name(static_cast<AVPixelFormat>(frame->format)));
         }
 
-        encoder.encode(frame);
+        encoder.encode(frame, q.timestamp_us);
 
         // 编码器有延迟：一次 send 可能出 0 个、1 个或多个包，全部推出去
         while (encoder.next_packet(pkt)) {
