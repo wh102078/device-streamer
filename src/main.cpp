@@ -121,8 +121,14 @@ int main(int argc, char** argv) {
 
     // 1) 采集
     V4L2Capture cap;
-    cap.open(kDevice, kWidth, kHeight, V4L2_PIX_FMT_MJPEG);
-    cap.start();
+    if (!cap.open(kDevice, kWidth, kHeight, V4L2_PIX_FMT_MJPEG)) {
+        std::fprintf(stderr, "error: 打开摄像头失败\n");
+        return EXIT_FAILURE;
+    }
+    if (!cap.start()) {
+        std::fprintf(stderr, "error: 启动采集失败\n");
+        return EXIT_FAILURE;
+    }
 
     // 2) 解码 / 编码 / 推流
     MJPEGDecoder decoder;

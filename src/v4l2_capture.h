@@ -33,10 +33,11 @@ public:
     V4L2Capture& operator=(const V4L2Capture&) = delete;
 
     // 打开、查能力、协商格式、申请缓冲、映射、入队（还没开流）
-    void open(const char* device, unsigned width, unsigned height, uint32_t pixel_format);
+    // 失败返回 false（错误信息已打印到 stderr），不会终止进程
+    bool open(const char* device, unsigned width, unsigned height, uint32_t pixel_format);
 
-    // STREAMON：开始出帧
-    void start();
+    // STREAMON：开始出帧。失败返回 false。
+    bool start();
 
     // STREAMOFF：停止出帧（可重复调用）
     void stop();
@@ -62,9 +63,11 @@ private:
     static constexpr unsigned kMaxBuffers = 4;
     static constexpr unsigned kMaxGrabAttempts = 5000;
 
-    void wait_for_frame();
-    bool dequeue(struct v4l2_buffer* buf);
-    void queue(unsigned index);
+    enum class DequeueResult { Ok, Again, Error };
+
+    bool wait_for_frame();
+    DequeueResult dequeue(struct v4l2_buffer* buf);
+    bool queue(unsigned index);
 
     int fd_ = -1;
     Buffer buffers_[kMaxBuffers];

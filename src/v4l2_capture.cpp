@@ -50,26 +50,31 @@ V4L2Capture::~V4L2Capture() {
     close();
 }
 
-void V4L2Capture::open(const char* device, unsigned width, unsigned height,
+bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
                        uint32_t pixel_format) {
     fd_ = ::open(device, O_RDWR | O_NONBLOCK);
     if (fd_ < 0) {
-        ds::die("open");
+        std::fprintf(stderr, "open(%s) failed: %s\n", device, std::strerror(errno));
+        return false;
     }
 
     // 1) 能力检查
     struct v4l2_capability cap{};
     if (xioctl(fd_, VIDIOC_QUERYCAP, &cap) < 0) {
-        ds::die("VIDIOC_QUERYCAP");
+        std::fprintf(stderr, "VIDIOC_QUERYCAP failed: %s\n", std::strerror(errno));
+        close();
+        return false;
     }
     std::printf("device : %s / %s\n", cap.driver, cap.card);
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
         std::fprintf(stderr, "error: 不是视频采集设备\n");
-        std::exit(EXIT_FAILURE);
+        close();
+        return false;
     }
     if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
         std::fprintf(stderr, "error: 不支持 streaming I/O\n");
-        std::exit(EXIT_FAILURE);
+        close();
+        return false;
     }
 
     // 2) 格式协商（S_FMT 是协商，不是命令，要读回实际值）
@@ -80,7 +85,9 @@ void V4L2Capture::open(const char* device, unsigned width, unsigned height,
     fmt.fmt.pix.pixelformat = pixel_format;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
     if (xioctl(fd_, VIDIOC_S_FMT, &fmt) < 0) {
-        ds::die("VIDIOC_S_FMT");
+        std::fprintf(stderr, "VIDIOC_S_FMT failed: %s\n", std::strerror(errno));
+        close();
+        return false;
     }
 
     char fourcc[5];
@@ -93,7 +100,8 @@ void V4L2Capture::open(const char* device, unsigned width, unsigned height,
     }
     if (fmt.fmt.pix.pixelformat != pixel_format) {
         std::fprintf(stderr, "error: 驱动没有接受请求的格式，实际是 %s\n", fourcc);
-        std::exit(EXIT_FAILURE);
+        close();
+        return false;
     }
 
     // 3) 申请缓冲（只指定个数；大小由格式决定）
@@ -102,11 +110,14 @@ void V4L2Capture::open(const char* device, unsigned width, unsigned height,
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     if (xioctl(fd_, VIDIOC_REQBUFS, &req) < 0) {
-        ds::die("VIDIOC_REQBUFS");
+        std::fprintf(stderr, "VIDIOC_REQBUFS failed: %s\n", std::strerror(errno));
+        close();
+        return false;
     }
     if (req.count < 2) {
         std::fprintf(stderr, "error: 驱动只给了 %u 个缓冲\n", req.count);
-        std::exit(EXIT_FAILURE);
+        close();
+        return false;
     }
     buffer_count_ = req.count;
 
@@ -131,16 +142,22 @@ void V4L2Capture::open(const char* device, unsigned width, unsigned height,
 
     // 5) 全部 QBUF 交给驱动，等着被填数据
     for (unsigned i = 0; i < buffer_count_; ++i) {
-        queue(i);
+        if (!queue(i)) {
+            close();
+            return false;
+        }
     }
+    return true;
 }
 
-void V4L2Capture::start() {
+bool V4L2Capture::start() {
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(fd_, VIDIOC_STREAMON, &type) < 0) {
-        ds::die("VIDIOC_STREAMON");
+        std::fprintf(stderr, "VIDIOC_STREAMON failed: %s\n", std::strerror(errno));
+        return false;
     }
     streaming_ = true;
+    return true;
 }
 
 void V4L2Capture::stop() {
@@ -149,7 +166,9 @@ void V4L2Capture::stop() {
     }
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(fd_, VIDIOC_STREAMOFF, &type) < 0) {
-        ds::die("VIDIOC_STREAMOFF");
+        // 收尾阶段的失败不该阻止进程退出，只提示
+        std::fprintf(stderr, "warning: VIDIOC_STREAMOFF failed: %s\n",
+                     std::strerror(errno));
     }
     streaming_ = false;
     held_index_ = -1;
@@ -171,7 +190,7 @@ void V4L2Capture::close() {
     buffer_count_ = 0;
 }
 
-void V4L2Capture::wait_for_frame() {
+bool V4L2Capture::wait_for_frame() {
     struct pollfd pfd{};
     pfd.fd = fd_;
     pfd.events = POLLIN;
@@ -180,48 +199,58 @@ void V4L2Capture::wait_for_frame() {
         int r = poll(&pfd, 1, 3000);
         if (r < 0) {
             if (errno == EINTR) {
-                continue;
+                continue;  // 被信号打断，重试
             }
-            ds::die("poll");
+            std::fprintf(stderr, "poll failed: %s\n", std::strerror(errno));
+            return false;
         }
         if (r == 0) {
-            std::fprintf(stderr, "error: 3 秒内没有拿到帧\n");
-            std::exit(EXIT_FAILURE);
+            std::fprintf(stderr, "poll timeout: 3 秒内没有拿到帧\n");
+            return false;
         }
-        return;
+        return true;
     }
 }
 
-bool V4L2Capture::dequeue(struct v4l2_buffer* buf) {
+V4L2Capture::DequeueResult V4L2Capture::dequeue(struct v4l2_buffer* buf) {
     *buf = {};
     buf->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf->memory = V4L2_MEMORY_MMAP;
     if (xioctl(fd_, VIDIOC_DQBUF, buf) < 0) {
         if (errno == EAGAIN) {
-            return false;
+            return DequeueResult::Again;
         }
-        ds::die("VIDIOC_DQBUF");
+        std::fprintf(stderr, "VIDIOC_DQBUF failed: %s\n", std::strerror(errno));
+        return DequeueResult::Error;
     }
-    return true;
+    return DequeueResult::Ok;
 }
 
-void V4L2Capture::queue(unsigned index) {
+bool V4L2Capture::queue(unsigned index) {
     struct v4l2_buffer buf{};
     buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = index;
     if (xioctl(fd_, VIDIOC_QBUF, &buf) < 0) {
-        ds::die("VIDIOC_QBUF");
+        std::fprintf(stderr, "VIDIOC_QBUF failed: %s\n", std::strerror(errno));
+        return false;
     }
+    return true;
 }
 
 bool V4L2Capture::grab(CapturedFrame* out) {
     for (unsigned attempt = 0; attempt < kMaxGrabAttempts; ++attempt) {
-        wait_for_frame();
+        if (!wait_for_frame()) {
+            return false;  // 超时或设备异常，由调用方决定退出/重连
+        }
 
         struct v4l2_buffer buf{};
-        if (!dequeue(&buf)) {
+        const DequeueResult r = dequeue(&buf);
+        if (r == DequeueResult::Again) {
             continue;  // 暂时没帧，回去继续等
+        }
+        if (r == DequeueResult::Error) {
+            return false;  // 设备错误（例如被拔掉）
         }
 
         // 驱动标坏 或 内容不是完整 JPEG：丢弃并还回去，继续取下一帧
@@ -229,7 +258,9 @@ bool V4L2Capture::grab(CapturedFrame* out) {
                    || !looks_like_jpeg(buffers_[buf.index].start, buf.bytesused);
         if (bad) {
             ++rejected_;
-            queue(buf.index);
+            if (!queue(buf.index)) {
+                return false;
+            }
             continue;
         }
 
@@ -247,7 +278,9 @@ bool V4L2Capture::grab(CapturedFrame* out) {
 
 void V4L2Capture::release() {
     if (held_index_ >= 0) {
-        queue(static_cast<unsigned>(held_index_));
+        if (!queue(static_cast<unsigned>(held_index_))) {
+            std::fprintf(stderr, "warning: 归还缓冲失败\n");
+        }
         held_index_ = -1;
     }
 }
