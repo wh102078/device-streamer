@@ -15,6 +15,7 @@ UVC 摄像头 ──V4L2(MJPEG)──► 解码 ──► yuvj422p ──► yuv
 - H.264 编码（libx264，zerolatency，GOP 30）
 - 采集线程 + 有界帧队列（容量 3，满时丢最旧帧），编码/推流慢时不阻塞采集
 - RTSP 推流（TCP，FFmpeg RTSP muxer）
+- 推流断线重连（1s/2s/4s…上限 30s 指数退避），重连后强制 I 帧立即恢复画面
 
 ## 构建
 
@@ -52,6 +53,7 @@ src/
 ├── mjpeg_decoder.*    解码（libavcodec）
 ├── h264_encoder.*     编码（libx264 + sws）
 ├── rtsp_pusher.*      推流（libavformat RTSP muxer）
+├── frame_queue.*      采集与编码之间的有界队列
 ├── common.*           错误处理
 └── main.cpp           串联
 ```
