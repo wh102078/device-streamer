@@ -24,6 +24,7 @@ public:
     unsigned frames() const { return frames_.load(); }
     uint64_t bytes() const { return bytes_.load(); }
     unsigned dropped() const { return queue_.dropped(); }
+    unsigned write_errors() const { return write_errors_.load(); }
 
 private:
     void run();
@@ -36,4 +37,5 @@ private:
     std::thread thread_;
     std::atomic<unsigned> frames_{0};
     std::atomic<uint64_t> bytes_{0};
+    std::atomic<unsigned> write_errors_{0};
 };

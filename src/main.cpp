@@ -136,12 +136,12 @@ int main(int argc, char** argv) {
                             std::chrono::duration<double, std::milli>(now - start_time).count());
             }
             std::printf("stats: %u frames, %.1f fps, push %llu pkts/%.0f kbps, "
-                        "record %u frames, capture_drop %u, frame_queue_drop %u, "
-                        "push_queue_drop %u, reconnects %u\n",
+                        "record %u frames/%u write_errors, capture_drop %u, "
+                        "frame_queue_drop %u, push_queue_drop %u, reconnects %u\n",
                         frames, frames / elapsed,
                         static_cast<unsigned long long>(push.packets()), kbps,
-                        record.frames(), capture.rejected(), queue.dropped(),
-                        push.dropped(), push.reconnects());
+                        record.frames(), record.write_errors(), capture.rejected(),
+                        queue.dropped(), push.dropped(), push.reconnects());
             last_report = now;
         }
     }
@@ -163,13 +163,14 @@ int main(int argc, char** argv) {
     const double seconds = std::chrono::duration<double>(end_time - start_time).count();
     const double avg_kbps = seconds > 0 ? push.bytes() * 8.0 / seconds / 1000.0 : 0.0;
     std::printf("summary: %u frames, %.1f fps, push %llu pkts (%.0f kbps, reconnects %u, "
-                "last recovery %.0f ms), record %u frames/%llu bytes, "
+                "last recovery %.0f ms), record %u frames/%llu bytes (%u write_errors), "
                 "capture_drop %u, frame_queue_drop %u, push_queue_drop %u, %.1fs\n",
                 frames, seconds > 0 ? frames / seconds : 0.0,
                 static_cast<unsigned long long>(push.packets()), avg_kbps,
                 push.reconnects(), push.last_recovery_ms(),
                 record.frames(), static_cast<unsigned long long>(record.bytes()),
-                capture.rejected(), queue.dropped(), push.dropped(), seconds);
+                record.write_errors(), capture.rejected(), queue.dropped(),
+                push.dropped(), seconds);
 
     av_packet_free(&pkt);
     av_frame_free(&frame);
