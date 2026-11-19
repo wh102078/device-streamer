@@ -22,7 +22,7 @@ H264Encoder::~H264Encoder() {
     }
 }
 
-void H264Encoder::open(int width, int height, int fps) {
+void H264Encoder::open(int width, int height, int fps, int bitrate, unsigned gop) {
     const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
     if (codec == nullptr) {
         std::fprintf(stderr, "error: 找不到 H.264 编码器\n");
@@ -40,8 +40,8 @@ void H264Encoder::open(int width, int height, int fps) {
     ctx_->pix_fmt = AV_PIX_FMT_YUV420P;   // 兼容性最好
     ctx_->time_base = AVRational{1, fps}; // 一帧 = 1/fps 秒
     ctx_->framerate = AVRational{fps, 1};
-    ctx_->bit_rate = 2000000;             // 2 Mbps
-    ctx_->gop_size = fps;                 // 每秒一个关键帧
+    ctx_->bit_rate = bitrate;
+    ctx_->gop_size = (gop == 0) ? fps : static_cast<int>(gop);
     ctx_->max_b_frames = 0;               // 不用 B 帧，简化 PTS
     ctx_->thread_count = 1;
 
@@ -69,8 +69,8 @@ void H264Encoder::open(int width, int height, int fps) {
         std::exit(EXIT_FAILURE);
     }
 
-    std::printf("encoder: libx264 %dx%d yuv420p @%dfps 2Mbps gop=%d\n",
-                width, height, fps, fps);
+    std::printf("encoder: libx264 %dx%d yuv420p @%dfps %d bps gop=%d\n",
+                width, height, fps, bitrate, ctx_->gop_size);
 }
 
 bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {

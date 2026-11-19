@@ -1,6 +1,8 @@
 #include "rtsp_pusher.h"
 
+#include <chrono>
 #include <cstdio>
+#include <thread>
 
 #include "common.h"
 
@@ -86,6 +88,39 @@ bool RtspPusher::write(AVPacket* pkt) {
         return false;
     }
     return true;
+}
+
+bool RtspPusher::reconnect(const char* url, const AVCodecContext* enc,
+                           const std::function<bool()>& stop_requested,
+                           unsigned* attempts, double* recovery_ms) {
+    const auto start = std::chrono::steady_clock::now();
+    unsigned delay_ms = 1000;
+
+    while (!stop_requested()) {
+        ++*attempts;
+        std::fprintf(stderr, "推流断开，%u ms 后重连（第 %u 次）\n", delay_ms, *attempts);
+
+        // 分片睡眠，保证停止请求能及时生效
+        for (unsigned waited = 0; waited < delay_ms; waited += 100) {
+            if (stop_requested()) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+
+        if (open(url, enc)) {
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+            if (recovery_ms != nullptr) {
+                *recovery_ms = ms;
+            }
+            std::fprintf(stderr, "推流重连成功，恢复耗时 %.0f ms\n", ms);
+            return true;
+        }
+
+        delay_ms = (delay_ms * 2 > 30000) ? 30000 : delay_ms * 2;
+    }
+    return false;
 }
 
 void RtspPusher::close() {

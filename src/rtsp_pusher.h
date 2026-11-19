@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -23,6 +25,13 @@ public:
     // 发送一个编码包。返回 false 表示发送失败，会话已不可用。
     // 注意：无论成功失败，pkt 的数据都会被释放。
     bool write(AVPacket* pkt);
+
+    // 断线后指数退避重连：1s → 2s → 4s … 上限 30s。
+    // stop_requested 返回 true 时中止；attempts 累加尝试次数；
+    // recovery_ms 返回从开始重连到成功的耗时（可为 nullptr）。
+    bool reconnect(const char* url, const AVCodecContext* enc,
+                   const std::function<bool()>& stop_requested,
+                   unsigned* attempts, double* recovery_ms);
 
     // 发 TEARDOWN 并释放 muxer（析构时自动调用，可重复调用）。
     void close();

@@ -27,7 +27,8 @@ public:
 
     // 打开、查能力、协商格式、申请缓冲、映射、入队（还没开流）
     // 失败返回 false（错误信息已打印到 stderr），不会终止进程
-    bool open(const char* device, unsigned width, unsigned height, uint32_t pixel_format);
+    bool open(const char* device, unsigned width, unsigned height, uint32_t pixel_format,
+              unsigned buffer_count = 4);
 
     // STREAMON：开始出帧。失败返回 false。
     bool start();

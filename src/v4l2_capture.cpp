@@ -51,7 +51,11 @@ V4L2Capture::~V4L2Capture() {
 }
 
 bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
-                       uint32_t pixel_format) {
+                       uint32_t pixel_format, unsigned buffer_count) {
+    if (buffer_count < 2 || buffer_count > kMaxBuffers) {
+        std::fprintf(stderr, "invalid buffer count: %u\n", buffer_count);
+        return false;
+    }
     fd_ = ::open(device, O_RDWR | O_NONBLOCK);
     if (fd_ < 0) {
         std::fprintf(stderr, "open(%s) failed: %s\n", device, std::strerror(errno));
@@ -106,7 +110,7 @@ bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
 
     // 3) 申请缓冲（只指定个数；大小由格式决定）
     struct v4l2_requestbuffers req{};
-    req.count = kMaxBuffers;
+    req.count = buffer_count;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     if (xioctl(fd_, VIDIOC_REQBUFS, &req) < 0) {

@@ -16,7 +16,7 @@ public:
     H264Encoder(const H264Encoder&) = delete;
     H264Encoder& operator=(const H264Encoder&) = delete;
 
-    void open(int width, int height, int fps);
+    void open(int width, int height, int fps, int bitrate, unsigned gop);
 
     // 转换像素格式并送进编码器。
     // timestamp_us：这一帧的采集时间（微秒），用来生成与真实时间一致的 PTS。

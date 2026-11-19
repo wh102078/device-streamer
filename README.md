@@ -82,17 +82,15 @@ ffplay -rtsp_transport tcp rtsp://127.0.0.1:8554/dev
 
 ## 配置
 
-当前仅推流地址可通过命令行传入；采集设备、分辨率、帧率、码率、GOP 和队列容量定义在 `src/main.cpp` 的常量中。
+采集设备、分辨率、帧率、码率、GOP、队列容量和 V4L2 缓冲数集中在 `src/config.h`（编译期常量），修改后重新编译即可。推流地址可通过命令行参数覆盖。
 
 ## 测试
 
 ```bash
 make asan   # AddressSanitizer + UBSan 构建
-make tsan   # ThreadSanitizer 构建
 ```
 
 - ASan/UBSan：连续推流无越界、无泄漏、无未定义行为报告；
-- TSan：仅报告信号处理函数与停止标志之间的竞争，属于 `sig_atomic_t` 的已知限制。
 
 ## 性能
 
@@ -113,17 +111,20 @@ make tsan   # ThreadSanitizer 构建
 | TCP | 226 | 无 |
 | UDP | 155 | 出现 RTP 丢包与解码花屏 |
 
-说明：测试环境光线不足时，摄像头会自动降低帧率；端到端延迟未测量。
+说明：测试环境光线不足时，摄像头会自动降低帧率。
 
 ## 目录结构
 
 ```
 src/main.cpp          程序入口：初始化、采集线程、主循环、统计
+src/config.h          编译期配置（设备、分辨率、码率、队列等）
+src/stop_flag.h       信号处理与停止标志
 src/v4l2_capture.*    V4L2 采集与坏帧过滤
 src/mjpeg_decoder.*   MJPEG 解码
 src/h264_encoder.*    H.264 编码与 PTS 生成
-src/rtsp_pusher.*     RTSP 推流与重连基础
+src/rtsp_pusher.*     RTSP 推流与断线重连
 src/frame_queue.*     采集与编码之间的有界队列
+src/debug_output.*    调试输出（首帧 JPEG/PPM）
 src/common.*          错误处理
 ```
 
