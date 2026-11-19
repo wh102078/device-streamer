@@ -60,7 +60,8 @@ void write_file(const char* path, const void* data, size_t size) {
 // 等待期间按 100ms 分片睡眠，保证 Ctrl+C 能及时生效。
 // 返回 false 表示用户要求停止。
 bool reconnect_pusher(RtspPusher& pusher, const char* url, AVCodecContext* enc,
-                      unsigned* attempts) {
+                      unsigned* attempts, double* recovery_ms) {
+    const auto reconnect_start = std::chrono::steady_clock::now();
     unsigned delay_ms = 1000;
     while (!g_stop) {
         ++*attempts;
@@ -72,7 +73,12 @@ bool reconnect_pusher(RtspPusher& pusher, const char* url, AVCodecContext* enc,
             break;
         }
         if (pusher.open(url, enc)) {
-            std::fprintf(stderr, "推流重连成功\n");
+            const double ms = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - reconnect_start).count();
+            if (recovery_ms != nullptr) {
+                *recovery_ms = ms;
+            }
+            std::fprintf(stderr, "推流重连成功，恢复耗时 %.0f ms\n", ms);
             return true;
         }
         delay_ms = (delay_ms * 2 > 30000) ? 30000 : delay_ms * 2;
@@ -186,6 +192,9 @@ int main(int argc, char** argv) {
     auto start_time = std::chrono::steady_clock::now();
     auto last_report = start_time;
     unsigned frames = 0;
+    unsigned long long bytes_sent = 0;   // 累计写出的字节数（用于算码率）
+    bool first_packet_sent = false;      // 首包时间只打印一次
+    double last_recovery_ms = 0;         // 最近一次重连恢复耗时
 
     std::printf("\n开始推流（Ctrl+C 退出）\n\n");
 
@@ -214,16 +223,25 @@ int main(int argc, char** argv) {
 
         // 编码器有延迟：一次 send 可能出 0 个、1 个或多个包，全部推出去
         while (encoder.next_packet(pkt)) {
+            const int packet_size = pkt->size;  // write 之后 pkt 会被释放
             if (!pusher.write(pkt)) {
                 av_packet_unref(pkt);
                 // 网络断开或服务器重启：重连期间这一帧丢弃，
                 // 采集线程继续工作，队列满了会丢旧帧，保证画面实时性
-                if (reconnect_pusher(pusher, url, encoder.context(), &reconnects)) {
+                if (reconnect_pusher(pusher, url, encoder.context(), &reconnects,
+                                     &last_recovery_ms)) {
                     // 新会话里客户端解码器是空的，下一帧强制 I 帧，
                     // 否则要等下一个自然 GOP（最多 1 秒）才恢复画面
                     encoder.request_keyframe();
                 }
                 break;
+            }
+            bytes_sent += static_cast<unsigned long long>(packet_size);
+            if (!first_packet_sent) {
+                first_packet_sent = true;
+                const double ms = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - start_time).count();
+                std::printf("首包时间: %.0f ms\n", ms);
             }
             av_packet_unref(pkt);
         }
@@ -234,11 +252,12 @@ int main(int argc, char** argv) {
         auto now = std::chrono::steady_clock::now();
         if (now - last_report >= std::chrono::seconds(1)) {
             double elapsed = std::chrono::duration<double>(now - start_time).count();
-            std::printf("streaming: %u 帧, %.1f fps, %u 包, %u 关键帧, "
-                        "采集丢弃 %u, 队列丢弃 %u, 积压 %zu\n",
+            const double kbps = elapsed > 0 ? bytes_sent * 8.0 / elapsed / 1000.0 : 0.0;
+            std::printf("streaming: %u 帧, %.1f fps, %u 包, %u 关键帧, %.0f kbps, "
+                        "采集丢弃 %u, 队列丢弃 %u, 积压 %zu, 重连 %u\n",
                         frames, frames / elapsed, encoder.packets(),
-                        encoder.keyframes(), cap.rejected(), queue.dropped(),
-                        queue.size());
+                        encoder.keyframes(), kbps, cap.rejected(), queue.dropped(),
+                        queue.size(), reconnects);
             last_report = now;
         }
     }
@@ -257,11 +276,12 @@ int main(int argc, char** argv) {
 
     auto end_time = std::chrono::steady_clock::now();
     double seconds = std::chrono::duration<double>(end_time - start_time).count();
-    std::printf("结束: %u 帧, %.1f fps, %u 包(%u 关键帧), 采集丢弃 %u, 队列丢弃 %u, "
-                "重连 %u 次, 总时长 %.1fs\n",
+    const double avg_kbps = seconds > 0 ? bytes_sent * 8.0 / seconds / 1000.0 : 0.0;
+    std::printf("结束: %u 帧, %.1f fps, %u 包(%u 关键帧), 平均码率 %.0f kbps, "
+                "采集丢弃 %u, 队列丢弃 %u, 重连 %u 次(最后恢复 %.0f ms), 总时长 %.1fs\n",
                 frames, seconds > 0 ? frames / seconds : 0.0, encoder.packets(),
-                encoder.keyframes(), cap.rejected(), queue.dropped(), reconnects,
-                seconds);
+                encoder.keyframes(), avg_kbps, cap.rejected(), queue.dropped(),
+                reconnects, last_recovery_ms, seconds);
 
     av_packet_free(&pkt);
     av_frame_free(&frame);
