@@ -17,14 +17,12 @@ void LatestFrameQueue::push(QueuedFrame frame) {
 
 bool LatestFrameQueue::pop(QueuedFrame* out, int timeout_ms) {
     std::unique_lock<std::mutex> lock(mutex_);
-    // wait_for 会释放锁并睡眠；被 notify、超时或 stop 后重新持锁
     const bool ready = cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                                     [this] { return !items_.empty() || stopped_; });
     if (!ready) {
         return false;  // 超时
     }
 
-    // stop() 之后先把已缓冲的帧取完，再返回 false
     if (items_.empty()) {
         return false;
     }

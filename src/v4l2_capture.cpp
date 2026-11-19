@@ -34,8 +34,7 @@ void fourcc_to_str(uint32_t f, char out[5]) {
     out[4] = '\0';
 }
 
-// MJPEG 帧是完整 JPEG：FF D8 开头（SOI），FF D9 结尾（EOI）。
-// 驱动报告的 bytesused 不代表内容一定是图像，必须自己验。
+// bytesused 非零不代表内容是完整 JPEG，需校验 SOI/EOI。
 bool looks_like_jpeg(const void* data, size_t size) {
     if (size < 4) {
         return false;
@@ -62,7 +61,6 @@ bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
         return false;
     }
 
-    // 1) 能力检查
     struct v4l2_capability cap{};
     if (xioctl(fd_, VIDIOC_QUERYCAP, &cap) < 0) {
         std::fprintf(stderr, "VIDIOC_QUERYCAP failed: %s\n", std::strerror(errno));
@@ -81,7 +79,6 @@ bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
         return false;
     }
 
-    // 2) 格式协商（S_FMT 是协商，不是命令，要读回实际值）
     struct v4l2_format fmt{};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width = width;
@@ -108,7 +105,6 @@ bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
         return false;
     }
 
-    // 3) 申请缓冲（只指定个数；大小由格式决定）
     struct v4l2_requestbuffers req{};
     req.count = buffer_count;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -125,7 +121,6 @@ bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
     }
     buffer_count_ = req.count;
 
-    // 4) QUERYBUF 拿 length/offset，然后 mmap
     for (unsigned i = 0; i < buffer_count_; ++i) {
         struct v4l2_buffer buf{};
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -144,7 +139,6 @@ bool V4L2Capture::open(const char* device, unsigned width, unsigned height,
     }
     std::printf("buffers: %u 块，每块 %zu 字节\n", buffer_count_, buffers_[0].length);
 
-    // 5) 全部 QBUF 交给驱动，等着被填数据
     for (unsigned i = 0; i < buffer_count_; ++i) {
         if (!queue(i)) {
             close();
@@ -170,7 +164,6 @@ void V4L2Capture::stop() {
     }
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (xioctl(fd_, VIDIOC_STREAMOFF, &type) < 0) {
-        // 收尾阶段的失败不该阻止进程退出，只提示
         std::fprintf(stderr, "warning: VIDIOC_STREAMOFF failed: %s\n",
                      std::strerror(errno));
     }
@@ -257,7 +250,7 @@ bool V4L2Capture::grab(CapturedFrame* out) {
             return false;  // 设备错误（例如被拔掉）
         }
 
-        // 驱动标坏 或 内容不是完整 JPEG：丢弃并还回去，继续取下一帧
+        // 驱动标坏或不是完整 JPEG：丢弃重取
         bool bad = (buf.flags & V4L2_BUF_FLAG_ERROR) != 0
                    || !looks_like_jpeg(buffers_[buf.index].start, buf.bytesused);
         if (bad) {
@@ -272,7 +265,6 @@ bool V4L2Capture::grab(CapturedFrame* out) {
         out->size = buf.bytesused;
         out->sequence = buf.sequence;
         out->index = buf.index;
-        // 驱动时间戳（CLOCK_MONOTONIC），秒 + 微秒
         out->timestamp_us = static_cast<uint64_t>(buf.timestamp.tv_sec) * 1000000ULL +
                             static_cast<uint64_t>(buf.timestamp.tv_usec);
         held_index_ = static_cast<int>(buf.index);

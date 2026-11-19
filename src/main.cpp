@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    // 采集线程：抓帧后拷贝进队列，立即归还驱动缓冲。
+    // 采集线程：release 后驱动可能覆盖缓冲，跨线程传递必须拷贝。
     LatestFrameQueue queue(config::kQueueCapacity);
     std::thread capture_thread([&capture, &queue]() {
         while (!stopflag::requested()) {

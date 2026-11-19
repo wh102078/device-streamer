@@ -37,12 +37,12 @@ void H264Encoder::open(int width, int height, int fps, int bitrate, unsigned gop
 
     ctx_->width = width;
     ctx_->height = height;
-    ctx_->pix_fmt = AV_PIX_FMT_YUV420P;   // 兼容性最好
-    ctx_->time_base = AVRational{1, fps}; // 一帧 = 1/fps 秒
+    ctx_->pix_fmt = AV_PIX_FMT_YUV420P;
+    ctx_->time_base = AVRational{1, fps};
     ctx_->framerate = AVRational{fps, 1};
     ctx_->bit_rate = bitrate;
     ctx_->gop_size = (gop == 0) ? fps : static_cast<int>(gop);
-    ctx_->max_b_frames = 0;               // 不用 B 帧，简化 PTS
+    ctx_->max_b_frames = 0;
     ctx_->thread_count = 1;
 
     // zerolatency：关闭 x264 预读缓冲以降低编码延迟，代价是压缩率略低。
@@ -55,7 +55,6 @@ void H264Encoder::open(int width, int height, int fps, int bitrate, unsigned gop
         ds::ff_die("avcodec_open2(encoder)", ret);
     }
 
-    // 编码器输入帧：格式 yuv420p，缓冲区只分配一次，逐帧复用
     yuv420p_ = av_frame_alloc();
     if (yuv420p_ == nullptr) {
         std::fprintf(stderr, "error: av_frame_alloc(yuv420p) 失败\n");
@@ -74,7 +73,7 @@ void H264Encoder::open(int width, int height, int fps, int bitrate, unsigned gop
 }
 
 bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
-    // 源格式要等第一帧才知道（yuvj422p），所以第一次编码时建转换器
+    // 第一帧解码后才知道源格式
     if (sws_ == nullptr) {
         sws_ = sws_getContext(frame->width, frame->height,
                               static_cast<AVPixelFormat>(frame->format),
@@ -85,7 +84,7 @@ bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
             std::fprintf(stderr, "error: sws_getContext 失败\n");
             return false;
         }
-        // 显式告诉 sws：源是 full range（JPEG），目标是 limited range（H.264）
+        // full range -> limited range
         sws_setColorspaceDetails(sws_,
                                  sws_getCoefficients(SWS_CS_ITU601), 1,
                                  sws_getCoefficients(SWS_CS_ITU601), 0,
@@ -98,7 +97,7 @@ bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
     sws_scale(sws_, frame->data, frame->linesize, 0, frame->height,
               yuv420p_->data, yuv420p_->linesize);
 
-    // PTS 由采集时间生成：相机降帧时帧间隔变化，PTS 需随之变化，避免播放速度错误。
+    // PTS 按采集时间换算，相机变帧率时播放速度才正确
     if (first_ts_us_ < 0) {
         first_ts_us_ = static_cast<int64_t>(timestamp_us);
     }
@@ -129,7 +128,7 @@ bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
 bool H264Encoder::next_packet(AVPacket* pkt) {
     int ret = avcodec_receive_packet(ctx_, pkt);
     if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-        return false;  // 暂时没有新包，或编码器已彻底结束
+        return false;
     }
     if (ret < 0) {
         ds::ff_die("avcodec_receive_packet", ret);

@@ -19,7 +19,6 @@ MJPEGDecoder::MJPEGDecoder() {
         std::exit(EXIT_FAILURE);
     }
 
-    // MJPEG 每帧独立，单线程就够
     ctx_->thread_count = 1;
 
     int ret = avcodec_open2(ctx_, codec, nullptr);
