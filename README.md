@@ -38,7 +38,7 @@ Device Streamer 是一个运行在 Linux 设备端的视频推流程序：从 UV
 | 音视频 | FFmpeg 7.1（libavformat / libavcodec / libswscale / libavutil）、libx264 |
 | 并发 | `std::thread`、`std::mutex`、`std::condition_variable`、`std::atomic` |
 | 网络/协议 | TCP/IP、RTSP、RTP over TCP |
-| 构建/调试 | Makefile、G++、ASan/UBSan、TSan |
+| 构建/调试 | Makefile、G++、ASan/UBSan |
 
 ## 构建
 
