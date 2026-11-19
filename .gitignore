@@ -1,5 +1,7 @@
 # 编译产物
 device_streamer
+device_streamer_asan
+device_streamer_tsan
 *.o
 
 # 运行输出（帧图、码流）

@@ -7,14 +7,8 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-// H.264 编码器（libx264）。
-// 输入：任意像素格式的 AVFrame（内部用 sws 转成 yuv420p）。
-// 输出：AVPacket，由调用方决定写文件还是推流。
-//
-// 用法（和 FFmpeg 本身一样，send/receive 分离）：
-//   encoder.encode(frame);              // 送一帧
-//   while (encoder.next_packet(&pkt))   // 把能取出的包取干
-//       pusher.write(&pkt);
+// H.264 编码器（libx264）：输入 AVFrame，输出 AVPacket。
+// send/receive 分离：encode() 送帧，next_packet() 取包，flush() 结束输入。
 class H264Encoder {
 public:
     H264Encoder() = default;

@@ -48,8 +48,8 @@ bool RtspPusher::open(const char* url, const AVCodecContext* enc) {
     stream_->time_base = enc->time_base;
     enc_time_base_ = enc->time_base;
 
-    // 4) 握手：OPTIONS/ANNOUNCE/SETUP/RECORD 都在这一步内部完成。
-    //    rtsp_transport=tcp：RTP 走 TCP 交错（虚拟机里比 UDP 稳）
+    // 4) 握手：OPTIONS/ANNOUNCE/SETUP/RECORD 由 write_header 内部完成。
+    //    RTP 走 TCP 交错（本机及虚拟机环境更稳定）。
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "rtsp_transport", "tcp", 0);
 

@@ -35,8 +35,7 @@ MJPEGDecoder::~MJPEGDecoder() {
 }
 
 bool MJPEGDecoder::decode(const void* data, size_t size, AVFrame* frame) {
-    // 不能把 mmap 内存直接交给 av_packet_from_data（它会负责 free，而那是驱动的内存）。
-    // 所以用 av_new_packet 分配自己的缓冲，再 memcpy 一份。
+    // av_packet_from_data 会接管并释放传入内存，不能用于 mmap 缓冲；这里拷贝一份。
     AVPacket* pkt = av_packet_alloc();
     if (pkt == nullptr) {
         return false;

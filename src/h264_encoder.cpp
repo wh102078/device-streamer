@@ -45,8 +45,7 @@ void H264Encoder::open(int width, int height, int fps) {
     ctx_->max_b_frames = 0;               // 不用 B 帧，简化 PTS
     ctx_->thread_count = 1;
 
-    // tune=zerolatency：关掉 x264 的预读缓冲（默认会攒 30~40 帧才出第一个包，
-    // 这就是推流端 1 秒延迟的主要来源）。代价是压缩率略低、码率控制没那么平滑。
+    // zerolatency：关闭 x264 预读缓冲以降低编码延迟，代价是压缩率略低。
     AVDictionary* opts = nullptr;
     av_dict_set(&opts, "tune", "zerolatency", 0);
 
@@ -99,9 +98,7 @@ bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
     sws_scale(sws_, frame->data, frame->linesize, 0, frame->height,
               yuv420p_->data, yuv420p_->linesize);
 
-    // PTS 来自真实采集时间，而不是帧序号：
-    // 相机从 30fps 降到 15fps 时，帧间隔变成 66ms，PTS 也要跟着变成 2 个单位，
-    // 否则客户端会按 33ms 播放，画面变成 2 倍速。
+    // PTS 由采集时间生成：相机降帧时帧间隔变化，PTS 需随之变化，避免播放速度错误。
     if (first_ts_us_ < 0) {
         first_ts_us_ = static_cast<int64_t>(timestamp_us);
     }
@@ -113,8 +110,7 @@ bool H264Encoder::encode(const AVFrame* frame, uint64_t timestamp_us) {
     last_pts_ = pts;
     yuv420p_->pts = pts;
 
-    // 重连后请求的 I 帧：只作用于这一帧，用完立刻复位，
-    // 否则每帧都是关键帧，码率会大幅上升
+    // 重连后请求的 I 帧：只作用于当前帧，用后复位，避免每帧都成为关键帧。
     if (force_keyframe_) {
         yuv420p_->pict_type = AV_PICTURE_TYPE_I;
         force_keyframe_ = false;

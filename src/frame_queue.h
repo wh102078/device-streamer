@@ -14,8 +14,7 @@ struct QueuedFrame {
     uint64_t timestamp_us = 0;  // 采集时间，用于生成 PTS
 };
 
-// 有界帧队列：满了就丢最旧的一帧。
-// 实时监控要的是"最新画面"，不是"每一帧都送达"，所以这里不阻塞生产者。
+// 有界帧队列：满时丢弃最旧帧，push 不阻塞生产者；pop 等待直到有帧或 stop()。
 class LatestFrameQueue {
 public:
     explicit LatestFrameQueue(std::size_t capacity) : capacity_(capacity) {}

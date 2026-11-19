@@ -17,16 +17,7 @@ struct CapturedFrame {
 };
 
 // V4L2 流式采集（mmap 模式）。
-//
-// 典型用法：
-//   V4L2Capture cap;
-//   cap.open("/dev/video0", 640, 480, V4L2_PIX_FMT_MJPEG);
-//   cap.start();
-//   while (...) {
-//       CapturedFrame f;
-//       if (cap.grab(&f)) { ...用 f.data...; cap.release(); }
-//   }
-//   cap.stop();   // 析构时自动 close
+// grab()/release() 必须成对使用：grab 拿到的帧在 release 前有效。
 class V4L2Capture {
 public:
     V4L2Capture() = default;
