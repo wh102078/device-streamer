@@ -1,4 +1,4 @@
-#include "frame_queue.h"
+#include "queue/frame_queue.h"
 
 void LatestFrameQueue::push(QueuedFrame frame) {
     {

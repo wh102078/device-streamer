@@ -1,4 +1,4 @@
-#include "debug_output.h"
+#include "common/debug_output.h"
 
 #include <cerrno>
 #include <cstdio>

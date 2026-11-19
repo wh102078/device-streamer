@@ -1,10 +1,10 @@
 CXX      := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -g -Isrc
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -g -Iinclude
 FF_CFLAGS := $(shell pkg-config --cflags libavcodec libavformat libavutil libswscale)
 FF_LIBS   := $(shell pkg-config --libs libavcodec libavformat libavutil libswscale)
 
 TARGET := device_streamer
-SRC    := $(wildcard src/*.cpp)
+SRC    := $(wildcard src/*.cpp src/*/*.cpp)
 
 # 内存/未定义行为检查
 ASAN_FLAGS := -fsanitize=address,undefined -fno-omit-frame-pointer

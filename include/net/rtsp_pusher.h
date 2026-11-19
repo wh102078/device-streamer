@@ -19,7 +19,7 @@ public:
     // 返回 false 表示会话已不可用；pkt 的数据会被释放。
     bool write(AVPacket* pkt);
 
-    // 指数退避重连：1s → 2s → 4s … 上限 30s。recovery_ms 可为 nullptr。
+    // 指数退避重连：1s -> 2s -> 4s ... 上限 30s。recovery_ms 可为 nullptr。
     bool reconnect(const char* url, const AVCodecContext* enc,
                    const std::function<bool()>& stop_requested,
                    unsigned* attempts, double* recovery_ms);

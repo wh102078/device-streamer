@@ -1,10 +1,10 @@
-#include "mjpeg_decoder.h"
+#include "codec/mjpeg_decoder.h"
 
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-#include "common.h"
+#include "common/common.h"
 
 MJPEGDecoder::MJPEGDecoder() {
     const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);

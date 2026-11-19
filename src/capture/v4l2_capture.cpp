@@ -1,4 +1,4 @@
-#include "v4l2_capture.h"
+#include "capture/v4l2_capture.h"
 
 #include <linux/videodev2.h>
 
@@ -13,7 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "common.h"
+#include "common/common.h"
 
 namespace {
 

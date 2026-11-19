@@ -1,4 +1,4 @@
-#include "h264_encoder.h"
+#include "codec/h264_encoder.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,7 +8,7 @@ extern "C" {
 #include <libavutil/mathematics.h>
 }
 
-#include "common.h"
+#include "common/common.h"
 
 H264Encoder::~H264Encoder() {
     if (sws_ != nullptr) {
@@ -44,6 +44,8 @@ void H264Encoder::open(int width, int height, int fps, int bitrate, unsigned gop
     ctx_->gop_size = (gop == 0) ? fps : static_cast<int>(gop);
     ctx_->max_b_frames = 0;
     ctx_->thread_count = 1;
+    // 让 SPS/PPS 写入 extradata（MP4 的 avcC 需要），而不是只放在码流里
+    ctx_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
     // zerolatency：关闭 x264 预读缓冲以降低编码延迟，代价是压缩率略低。
     AVDictionary* opts = nullptr;
