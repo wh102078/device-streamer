@@ -27,6 +27,7 @@ extern "C" {
 #include "capture/v4l2_capture.h"
 
 int main(int argc, char** argv) {
+    const auto process_start = std::chrono::steady_clock::now();
     const char* url = (argc > 1) ? argv[1] : config::kDefaultUrl;
     stopflag::install();
 
@@ -124,17 +125,20 @@ int main(int argc, char** argv) {
             dispatch_packet(pkt, push, recording ? &record : nullptr);
         }
 
+        // 首包打点在每个编码循环后检查，避免等到下一次 1 秒统计
+        if (!first_packet_reported && push.packets() > 0) {
+            first_packet_reported = true;
+            std::printf("first packet: %.0f ms\n",
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - process_start).count());
+        }
+
         ++frames;
 
         const auto now = std::chrono::steady_clock::now();
         if (now - last_report >= std::chrono::seconds(1)) {
             const double elapsed = std::chrono::duration<double>(now - start_time).count();
             const double kbps = elapsed > 0 ? push.bytes() * 8.0 / elapsed / 1000.0 : 0.0;
-            if (!first_packet_reported && push.packets() > 0) {
-                first_packet_reported = true;
-                std::printf("first packet: %.0f ms\n",
-                            std::chrono::duration<double, std::milli>(now - start_time).count());
-            }
             std::printf("stats: %u frames, %.1f fps, push %llu pkts/%.0f kbps, "
                         "record %u frames/%u write_errors, capture_drop %u, "
                         "frame_queue_drop %u, push_queue_drop %u, reconnects %u\n",
